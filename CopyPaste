@@ -1,0 +1,357 @@
+<!-- File: SubscriptionsViewer.page -->
+<apex:page controller="SubscriptionsViewerController" lightningStylesheets="true" showHeader="true" sidebar="true">
+    <apex:form id="theForm">
+        <apex:pageMessages />
+
+        <!-- Filters -->
+        <apex:pageBlock title="Subscription Filters">
+            <apex:pageBlockSection columns="4">
+                <apex:inputField value="{!filterAccount.AccountId}" label="Account" />
+                <apex:selectList value="{!status}" size="1" label="Status">
+                    <apex:selectOptions value="{!statusOptions}" />
+                </apex:selectList>
+                <apex:inputText value="{!searchText}" label="Search (Name/Product)" />
+                <apex:pageBlockSectionItem />
+                <apex:inputText value="{!startDateFrom}" label="Start Date From (YYYY-MM-DD)" />
+                <apex:inputText value="{!startDateTo}" label="Start Date To (YYYY-MM-DD)" />
+                <apex:inputText value="{!endDateFrom}" label="End Date From (YYYY-MM-DD)" />
+                <apex:inputText value="{!endDateTo}" label="End Date To (YYYY-MM-DD)" />
+            </apex:pageBlockSection>
+            <apex:pageBlockButtons>
+                {!applyFilters}
+                {!resetFilters}
+            </apex:pageBlockButtons>
+        </apex:pageBlock>
+
+        <!-- List -->
+        <apex:actionStatus id="sts">
+            <apex:facet name="start"><apex:outputText value="Loading..."/></apex:facet>
+        </apex:actionStatus>
+
+        <apex:pageBlock id="listBlock" title="Subscriptions">
+            <apex:pageBlockTable value="{!subscriptions}" var="s" rendered="{!NOT(ISNULL(subscriptions))}">
+                <apex:column headerValue="Name" >
+                    <apex:outputLink value="/{!s.Id}">{!s.Name}</apex:outputLink>
+                </apex:column>
+                <apex:column headerValue="Account" >
+                    <apex:outputLink value="/{!s.SBQQ__Account__c}">{!s.SBQQ__Account__r.Name}</apex:outputLink>
+                </apex:column>
+                <apex:column headerValue="Product">
+                    <apex:outputText value="{!s.SBQQ__Product__r.Name}" />
+                </apex:column>
+                <apex:column headerValue="Status">
+                    {!sort}
+                        <apex:param name="col" value="SBQQ__Status__c" assignTo="{!sortColumn}"/>
+                    </apex:commandLink>
+                </apex:column>
+                <apex:column headerValue="Start Date">
+                    {!sort}
+                        <apex:param name="col" value="SBQQ__StartDate__c" assignTo="{!sortColumn}"/>
+                    </apex:commandLink>
+                </apex:column>
+                <apex:column headerValue="End Date">
+                    {!sort}
+                        <apex:param name="col" value="SBQQ__EndDate__c" assignTo="{!sortColumn}"/>
+                    </apex:commandLink>
+                </apex:column>
+                <apex:column headerValue="Quantity">
+                    <apex:outputText value="{!s.SBQQ__Quantity__c}" />
+                </apex:column>
+                <apex:column headerValue="Amount">
+                    <apex:outputText value="{!s.SBQQ__Amount__c}" />
+                </apex:column>
+            </apex:pageBlockTable>
+
+            <apex:outputPanel rendered="{!totalRows = 0}">
+                <apex:outputText value="No subscriptions found." />
+            </apex:outputPanel>
+        </apex:pageBlock>
+
+        <!-- Pagination -->
+        <apex:outputPanel id="pager">
+            <apex:pageBlock title="Pages" rendered="{!totalRows > 0}">
+                {!first}
+                {!previous}
+                <apex:outputText value=" Page {!pageNumber} of {!totalPages} (Rows: {!totalRows}) " />
+                {!next}
+                {!last}
+                &nbsp;|&nbsp; Page Size:
+                <apex:selectList value="{!pageSize}" size="1">
+                    <apex:selectOption itemValue="10" itemLabel="10"/>
+                    <apex:selectOption itemValue="25" itemLabel="25"/>
+                    <apex:selectOption itemValue="50" itemLabel="50"/>
+                </apex:selectList>
+                {!applyPageSize}
+            </apex:pageBlock>
+        </apex:outputPanel>
+    </apex:form>
+</apex:page>
+
+
+##########################################
+
+// File: SubscriptionsViewerController.cls
+public with sharing class SubscriptionsViewerController {
+
+    // ----- Filter properties -----
+    public Id accountId { get; set; }
+    public String status { get; set; }
+    public String searchText { get; set; } // matches Name or Product Name
+    public String startDateFrom { get; set; }
+    public String startDateTo { get; set; }
+    public String endDateFrom { get; set; }
+    public String endDateTo { get; set; }
+
+    // For <apex:inputField> binding: a wrapper with AccountId field
+    public class FilterAccountWrapper {
+        @AuraEnabled public Id AccountId { get; set; }
+    }
+    public FilterAccountWrapper filterAccount { get; set; }
+
+    // ----- Sorting -----
+    public String sortColumn { get; set; }
+    public String sortDirection { get; set; } // 'ASC' or 'DESC'
+
+    // ----- Pagination -----
+    public Integer pageNumber { get; set; }
+    public Integer pageSize { get; set; }
+    public Integer totalRows { get; private set; }
+
+    public SubscriptionsViewerController() {
+        filterAccount = new FilterAccountWrapper();
+        status = 'All';
+        sortColumn = 'SBQQ__StartDate__c';
+        sortDirection = 'DESC';
+        pageNumber = 1;
+        pageSize = 25;
+        totalRows = 0;
+        // initial load
+        runQuery();
+    }
+
+    // Expose computed flags
+    public Boolean getIsFirstPage() { return pageNumber <= 1; }
+    public Boolean getIsLastPage() { return pageNumber >= getTotalPages(); }
+    public Integer getTotalPages() {
+        return (totalRows == 0) ? 1 : (Integer) Math.ceil((Decimal) totalRows / pageSize);
+    }
+
+    // Status picklist
+    public List<SelectOption> getStatusOptions() {
+        List<SelectOption> opts = new List<SelectOption>();
+        opts.add(new SelectOption('All','All'));
+        // Add common CPQ statuses; adjust for your org
+        for (String s : new List<String>{'Active','Canceled','Draft','Pending'}) {
+            opts.add(new SelectOption(s, s));
+        }
+        return opts;
+    }
+
+    // Public getter for VF table
+    public List<SBQQ__Subscription__c> getSubscriptions() {
+        return currentPageRows;
+    }
+
+    // Backing store for current rows
+    private List<SBQQ__Subscription__c> currentPageRows = new List<SBQQ__Subscription__c>();
+
+    // Build base WHERE and parameters
+    private class QueryParts {
+        String whereClause;
+        Map<String, Object> binds;
+    }
+
+    private QueryParts buildWhere() {
+        List<String> where = new List<String>();
+        Map<String, Object> binds = new Map<String, Object>();
+
+        if (filterAccount != null && filterAccount.AccountId != null) {
+            where.add('SBQQ__Account__c = :accId');
+            binds.put('accId', filterAccount.AccountId);
+        }
+        if (status != null && status != 'All') {
+            where.add('SBQQ__Status__c = :sts');
+            binds.put('sts', status);
+        }
+        if (String.isNotBlank(searchText)) {
+            // match Name or Product Name via semi-join / subquery workaround
+            where.add('(Name LIKE :nameLike OR SBQQ__Product__r.Name LIKE :prodLike)');
+            String likeVal = '%' + searchText.replace('%','\\%').replace('_','\\_') + '%';
+            binds.put('nameLike', likeVal);
+            binds.put('prodLike', likeVal);
+        }
+        // Dates
+        Date sdFrom = parseDate(startDateFrom);
+        Date sdTo   = parseDate(startDateTo);
+        Date edFrom = parseDate(endDateFrom);
+        Date edTo   = parseDate(endDateTo);
+        if (sdFrom != null) { where.add('SBQQ__StartDate__c >= :sdFrom'); binds.put('sdFrom', sdFrom); }
+        if (sdTo   != null) { where.add('SBQQ__StartDate__c <= :sdTo');   binds.put('sdTo', sdTo); }
+        if (edFrom != null) { where.add('SBQQ__EndDate__c >= :edFrom');   binds.put('edFrom', edFrom); }
+        if (edTo   != null) { where.add('SBQQ__EndDate__c <= :edTo');     binds.put('edTo', edTo); }
+
+        QueryParts qp = new QueryParts();
+        qp.whereClause = where.isEmpty() ? '' : (' WHERE ' + String.join(where, ' AND '));
+        qp.binds = binds;
+        return qp;
+    }
+
+    private static Date parseDate(String s) {
+        try { return String.isBlank(s) ? null : Date.valueOf(s); }
+        catch (Exception e) { return null; }
+    }
+
+    // Count query
+    private Integer countRows(QueryParts qp) {
+        String soql = 'SELECT COUNT() FROM SBQQ__Subscription__c' + qp.whereClause;
+        return (Integer) Database.countQuery(soql, qp.binds);
+    }
+
+    // Sort validation: allowlisted columns only
+    private static Set<String> ALLOWED_SORT_COLS = new Set<String>{
+        'Name','SBQQ__Status__c','SBQQ__StartDate__c','SBQQ__EndDate__c','SBQQ__Quantity__c','SBQQ__Amount__c'
+    };
+
+    private String normalizedSort() {
+        String col = ALLOWED_SORT_COLS.contains(sortColumn) ? sortColumn : 'SBQQ__StartDate__c';
+        String dir = (sortDirection == 'ASC') ? 'ASC' : 'DESC';
+        return col + ' ' + dir + ', Id ASC';
+    }
+
+    private void runQuery() {
+        QueryParts qp = buildWhere();
+        totalRows = countRows(qp);
+
+        Integer offsetVal = (pageNumber - 1) * pageSize;
+        if (offsetVal < 0) offsetVal = 0;
+        if (offsetVal >= Math.max(totalRows,1)) {
+            // adjust if user changed page size or filters
+            pageNumber = Math.max(1, getTotalPages());
+            offsetVal = (pageNumber - 1) * pageSize;
+        }
+
+        String soql =
+            'SELECT Id, Name, ' +
+            'SBQQ__Account__c, SBQQ__Account__r.Name, ' +
+            'SBQQ__Product__c, SBQQ__Product__r.Name, ' +
+            'SBQQ__Status__c, SBQQ__StartDate__c, SBQQ__EndDate__c, ' +
+            'SBQQ__Quantity__c, SBQQ__Amount__c ' +
+            'FROM SBQQ__Subscription__c ' +
+            qp.whereClause + ' ORDER BY ' + normalizedSort() +
+            ' LIMIT :lim OFFSET :off';
+
+        Map<String, Object> b = qp.binds.deepClone();
+        b.put('lim', pageSize);
+        b.put('off', offsetVal);
+
+        currentPageRows = Database.queryWithBinds(soql, b);
+    }
+
+    // ----- Actions -----
+    public PageReference applyFilters() {
+        pageNumber = 1;
+        runQuery();
+        return null;
+    }
+    public PageReference resetFilters() {
+        filterAccount = new FilterAccountWrapper();
+        status = 'All';
+        searchText = null;
+        startDateFrom = null; startDateTo = null; endDateFrom = null; endDateTo = null;
+        pageNumber = 1;
+        sortColumn = 'SBQQ__StartDate__c'; sortDirection = 'DESC';
+        runQuery();
+        return null;
+    }
+
+    public PageReference sort() {
+        String requested = ApexPages.currentPage().getParameters().get('col');
+        if (ALLOWED_SORT_COLS.contains(requested)) {
+            if (requested == sortColumn) {
+                sortDirection = (sortDirection == 'ASC') ? 'DESC' : 'ASC';
+            } else {
+                sortColumn = requested;
+                sortDirection = 'ASC';
+            }
+        }
+        pageNumber = 1;
+        runQuery();
+        return null;
+    }
+
+    public PageReference applyPageSize() {
+        pageNumber = 1;
+        runQuery();
+        return null;
+    }
+
+    public PageReference next() { if (!getIsLastPage()) { pageNumber++; runQuery(); } return null; }
+    public PageReference previous() { if (!getIsFirstPage()) { pageNumber--; runQuery(); } return null; }
+    public PageReference first() { pageNumber = 1; runQuery(); return null; }
+    public PageReference last() { pageNumber = getTotalPages(); runQuery(); return null; }
+}
+
+
+
+#########################################
+
+// File: SubscriptionsViewerControllerTest.cls
+@IsTest
+private class SubscriptionsViewerControllerTest {
+    @TestSetup
+    static void setup() {
+        Account a = new Account(Name='Test Account');
+        insert a;
+
+        // Minimal CPQ Product
+        SBQQ__Product__c p = new SBQQ__Product__c(Name='Sample Product');
+        insert p;
+
+        List<SBQQ__Subscription__c> subs = new List<SBQQ__Subscription__c>();
+        for (Integer i=0; i<30; i++) {
+            subs.add(new SBQQ__Subscription__c(
+                Name = 'Sub ' + i,
+                SBQQ__Account__c = a.Id,
+                SBQQ__Product__c = p.Id,
+                SBQQ__Status__c = (i % 2 == 0) ? 'Active' : 'Canceled',
+                SBQQ__StartDate__c = Date.today().addDays(-i),
+                SBQQ__EndDate__c = Date.today().addDays(30 + i),
+                SBQQ__Quantity__c = 5,
+                SBQQ__Amount__c = 100
+            ));
+        }
+        insert subs;
+    }
+
+    @IsTest
+    static void testControllerBasic() {
+        Test.startTest();
+        SubscriptionsViewerController c = new SubscriptionsViewerController();
+        System.assertNotEquals(null, c.getSubscriptions(), 'Subscriptions should be loaded');
+        Integer total = c.totalRows;
+        System.assert(total > 0, 'Should have rows');
+
+        // Sort
+        c.sortColumn = 'Name';
+        c.sortDirection = 'ASC';
+        c.sort();
+
+        // Filters
+        c.status = 'Active';
+        c.applyFilters();
+        System.assert(c.totalRows <= total, 'Filtered rows should be <= total');
+
+        // Pagination
+        c.pageSize = 10;
+        c.applyPageSize();
+        System.assertEquals(10, c.getSubscriptions().size(), 'Page size should be respected');
+        c.next();
+        System.assertEquals(2, c.pageNumber);
+        c.previous();
+        System.assertEquals(1, c.pageNumber);
+        c.last();
+        System.assert(c.pageNumber >= 1, 'Last page should be >= 1');
+
+        Test.stopTest();
+    }
+}

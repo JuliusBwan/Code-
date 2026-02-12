@@ -1,4 +1,4 @@
-<apex:page controller="SubscriptionsViewerController" lightningStylesheets="true" showHeader="true" sidebar="true">
+<apex:page controller="SubscriptionsViewerController" lightningStylesheets="true" showHeader="true" sidebar="true" docType="html-5.0">
     <apex:form id="theForm">
 
         <apex:pageMessages />
@@ -19,10 +19,10 @@
                 <apex:inputText value="{!searchText}" label="Search (Subscription/Product)" />
 
                 <!-- Dates -->
-                <apex:inputText value="{!startDateFrom}" label="Start Date From (YYYY-MM-DD)" />
-                <apex:inputText value="{!startDateTo}" label="Start Date To (YYYY-MM-DD)" />
-                <apex:inputText value="{!endDateFrom}" label="End Date From (YYYY-MM-DD)" />
-                <apex:inputText value="{!endDateTo}" label="End Date To (YYYY-MM-DD)" />
+                <apex:input type="date" value="{!startDateFrom}" label="Start Date From" />
+                <apex:input type="date" value="{!startDateTo}" label="Start Date To" />
+                <apex:input type="date" value="{!endDateFrom}" label="End Date From" />
+                <apex:input type="date" value="{!endDateTo}" label="End Date To" />
 
             </apex:pageBlockSection>
 
@@ -91,7 +91,12 @@
     </apex:form>
 </apex:page>
 
-##############################################
+
+
+##################################################################################################################################
+
+
+
 
 public with sharing class SubscriptionsViewerController {
 
@@ -99,10 +104,10 @@ public with sharing class SubscriptionsViewerController {
     public String filterAccountName { get; set; }
     public String status { get; set; }
     public String searchText { get; set; }
-    public String startDateFrom { get; set; }
-    public String startDateTo { get; set; }
-    public String endDateFrom { get; set; }
-    public String endDateTo { get; set; }
+    public Date startDateFrom { get; set; }
+    public Date startDateTo { get; set; }
+    public Date endDateFrom { get; set; }
+    public Date endDateTo { get; set; }
 
     /* PAGINATION */
     public Integer pageNumber { get; set; }
@@ -163,15 +168,10 @@ public with sharing class SubscriptionsViewerController {
         }
 
         // Dates
-        Date sdFrom = parseDate(startDateFrom);
-        Date sdTo   = parseDate(startDateTo);
-        Date edFrom = parseDate(endDateFrom);
-        Date edTo   = parseDate(endDateTo);
-
-        if (sdFrom != null) conditions.add('SBQQ__StartDate__c >= ' + sdFrom.format());
-        if (sdTo   != null) conditions.add('SBQQ__StartDate__c <= ' + sdTo.format());
-        if (edFrom != null) conditions.add('SBQQ__EndDate__c >= ' + edFrom.format());
-        if (edTo   != null) conditions.add('SBQQ__EndDate__c <= ' + edTo.format());
+        if (startDateFrom != null) conditions.add('SBQQ__StartDate__c >= ' + startDateFrom.format());
+        if (startDateTo   != null) conditions.add('SBQQ__StartDate__c <= ' + startDateTo.format());
+        if (endDateFrom != null) conditions.add('SBQQ__EndDate__c >= ' + endDateFrom.format());
+        if (endDateTo   != null) conditions.add('SBQQ__EndDate__c <= ' + endDateTo.format());
 
         String whereClause = conditions.isEmpty() ? '' : ' WHERE ' + String.join(conditions, ' AND ');
 
@@ -197,11 +197,6 @@ public with sharing class SubscriptionsViewerController {
         currentRows = Database.query(soql);
     }
 
-    private static Date parseDate(String input) {
-        try { return String.isBlank(input) ? null : Date.valueOf(input); }
-        catch (Exception e) { return null; }
-    }
-
     /* ACTION METHODS */
     public PageReference applyFilters() { pageNumber = 1; runQuery(); return null; }
     public PageReference resetFilters() {
@@ -223,4 +218,3 @@ public with sharing class SubscriptionsViewerController {
     public PageReference last() { pageNumber = getTotalPages(); runQuery(); return null; }
     public PageReference applyPageSize() { pageNumber = 1; runQuery(); return null; }
 }
-

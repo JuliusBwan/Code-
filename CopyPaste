@@ -1,220 +1,110 @@
-<apex:page controller="SubscriptionsViewerController" lightningStylesheets="true" showHeader="true" sidebar="true" docType="html-5.0">
-    <apex:form id="theForm">
+“The types of logs/events we would want to monitor for (ideally) would include:
 
-        <apex:pageMessages />
+Anomalous access
 
-        <!-- FILTER SECTION -->
-        <apex:pageBlock title="Filters">
-            <apex:pageBlockSection columns="2">
-                
-                <!-- Account Filter -->
-                <apex:inputText value="{!filterAccountName}" label="Account Name" />
+Login events (with source IPs and Geolocation)
 
-                <!-- Status Dropdown -->
-                <apex:selectList value="{!status}" size="1" label="Status">
-                    <apex:selectOptions value="{!statusOptions}" />
-                </apex:selectList>
+Failed and successful
 
-                <!-- Search Text -->
-                <apex:inputText value="{!searchText}" label="Search (Subscription/Product)" />
+API and user
 
-                <!-- Dates -->
-                <apex:input type="date" value="{!startDateFrom}" label="Start Date From" />
-                <apex:input type="date" value="{!startDateTo}" label="Start Date To" />
-                <apex:input type="date" value="{!endDateFrom}" label="End Date From" />
-                <apex:input type="date" value="{!endDateTo}" label="End Date To" />
+Session Hijack
 
-            </apex:pageBlockSection>
+Fast travel events
 
-            <apex:pageBlockButtons>
-                <apex:commandButton value="Apply Filters" action="{!applyFilters}" />
-                <apex:commandButton value="Reset" action="{!resetFilters}" />
-            </apex:pageBlockButtons>
-        </apex:pageBlock>
+Suspicious IP
 
-        <!-- RESULTS TABLE -->
-        <apex:pageBlock title="Subscriptions">
-            <apex:pageBlockTable value="{!subscriptions}" var="s">
-                
-                <apex:column headerValue="Name">
-                    <apex:outputLink value="/{!s.Id}">{!s.Name}</apex:outputLink>
-                </apex:column>
+Suspicious user agent
 
-                <apex:column headerValue="Account">
-                    <apex:outputLink value="/{!s.SBQQ__Account__c}">{!s.SBQQ__Account__r.Name}</apex:outputLink>
-                </apex:column>
+Use of breakglass/local SF accounts
 
-                <apex:column headerValue="Product">
-                    <apex:outputText value="{!s.SBQQ__Product__r.Name}" />
-                </apex:column>
+Multiple successive failed logins
 
-                <apex:column headerValue="Status">
-                    <apex:outputText value="{!s.SBQQ__Contract__r.Status}" />
-                </apex:column>
+Data Theft/Loss
 
-                <apex:column headerValue="Start Date">
-                    <apex:outputText value="{0,date,yyyy-MM-dd}">
-                        <apex:param value="{!s.SBQQ__StartDate__c}" />
-                    </apex:outputText>
-                </apex:column>
+Access events (authorised and unauthorised)
 
-                <apex:column headerValue="End Date">
-                    <apex:outputText value="{0,date,yyyy-MM-dd}">
-                        <apex:param value="{!s.SBQQ__EndDate__c}" />
-                    </apex:outputText>
-                </apex:column>
+High number of unauthorised access events for a user would be deemed suspicious
 
-            </apex:pageBlockTable>
+Data/File export/download
 
-            <apex:outputPanel rendered="{!totalRows == 0}">
-                <apex:outputText value="No subscriptions found." />
-            </apex:outputPanel>
-        </apex:pageBlock>
+Bulk API data request
 
-        <!-- PAGINATION -->
-        <apex:pageBlock title="Pagination" rendered="{!totalRows > 0}">
-            <apex:commandButton value="First" action="{!first}" disabled="{!isFirstPage}" />
-            <apex:commandButton value="Previous" action="{!previous}" disabled="{!isFirstPage}" />
-            Page {!pageNumber} of {!totalPages}
-            <apex:commandButton value="Next" action="{!next}" disabled="{!isLastPage}" />
-            <apex:commandButton value="Last" action="{!last}" disabled="{!isLastPage}" />
+Bulk deletion operations
 
-            &nbsp; | Page Size:
-            <apex:selectList value="{!pageSize}" size="1">
-                <apex:selectOption itemValue="10" itemLabel="10"/>
-                <apex:selectOption itemValue="25" itemLabel="25"/>
-                <apex:selectOption itemValue="50" itemLabel="50"/>
-            </apex:selectList>
-            <apex:commandButton value="Apply" action="{!applyPageSize}" />
-        </apex:pageBlock>
+Privilege Escalation events
 
-    </apex:form>
-</apex:page>
+New account creation
+
+Permission Modifications
+
+Account disabled/enabled events
+
+Security policy changes
+
+Disabling MFA on accounts
+
+Disabling audit logging
+
+Disabling Data Masking
+
+Changes to access control settings”
+
+###############################
+Thanks for this information @Ben Stern. The types of logs/events we would want to monitor for (ideally) would include:
+
+Anomalous access
+
+Login events (with source IPs and Geolocation)
+
+Failed and successful
+
+API and user
+
+Session Hijack
+
+Fast travel events
+
+Suspicious IP
+
+Suspicious user agent
+
+Use of breakglass/local SF accounts
+
+Multiple successive failed logins
+
+Data Theft/Loss
+
+Access events (authorised and unauthorised)
+
+High number of unauthorised access events for a user would be deemed suspicious
+
+Data/File export/download
+
+Bulk API data request
+
+Bulk deletion operations
+
+Privilege Escalation events
+
+New account creation
+
+Permission Modifications
+
+Account disabled/enabled events
+
+Security policy changes
+
+Disabling MFA on accounts
+
+Disabling audit logging
+
+Disabling Data Masking
+
+Changes to access control settings
 
 
 
-##################################################################################################################################
+############################
 
-
-
-
-public with sharing class SubscriptionsViewerController {
-
-    /* FILTER VARIABLES */
-    public String filterAccountName { get; set; }
-    public String status { get; set; }
-    public String searchText { get; set; }
-    public Date startDateFrom { get; set; }
-    public Date startDateTo { get; set; }
-    public Date endDateFrom { get; set; }
-    public Date endDateTo { get; set; }
-
-    /* PAGINATION */
-    public Integer pageNumber { get; set; }
-    public Integer pageSize { get; set; }
-    public Integer totalRows { get; set; }
-    private List<SBQQ__Subscription__c> currentRows;
-
-    /* SORTING (optional) */
-    public String sortColumn { get; set; }
-    public String sortDirection { get; set; }
-
-    public SubscriptionsViewerController() {
-        status = 'All';
-        pageNumber = 1;
-        pageSize = 25;
-        sortColumn = 'SBQQ__StartDate__c';
-        sortDirection = 'DESC';
-        runQuery();
-    }
-
-    /* GETTERS */
-    public List<SBQQ__Subscription__c> getSubscriptions() { return currentRows; }
-    public Boolean getIsFirstPage() { return pageNumber <= 1; }
-    public Boolean getIsLastPage() { return pageNumber >= getTotalPages(); }
-    public Integer getTotalPages() { return (totalRows == 0) ? 1 : (Integer)Math.ceil((Decimal)totalRows / pageSize); }
-
-    public List<SelectOption> getStatusOptions() {
-        return new List<SelectOption>{
-            new SelectOption('All','All'),
-            new SelectOption('Active','Active'),
-            new SelectOption('Canceled','Canceled'),
-            new SelectOption('Draft','Draft'),
-            new SelectOption('Pending','Pending')
-        };
-    }
-
-    /* QUERY */
-    private void runQuery() {
-        List<String> conditions = new List<String>();
-
-        // Account Name filter
-        if (String.isNotBlank(filterAccountName)) {
-            List<Account> accs = [SELECT Id FROM Account WHERE Name = :filterAccountName LIMIT 1];
-            if (!accs.isEmpty()) {
-                conditions.add('SBQQ__Account__c = \'' + accs[0].Id + '\'');
-            }
-        }
-
-        // Status
-        if (status != null && status != 'All') {
-            conditions.add('SBQQ__Contract__r.Status = \'' + status + '\'');
-        }
-
-        // Search Text
-        if (String.isNotBlank(searchText)) {
-            String likeValue = '%' + searchText + '%';
-            conditions.add('(Name LIKE \'' + String.escapeSingleQuotes(likeValue) + '\' OR SBQQ__Product__r.Name LIKE \'' + String.escapeSingleQuotes(likeValue) + '\')');
-        }
-
-        // Dates
-        if (startDateFrom != null) conditions.add('SBQQ__StartDate__c >= ' + startDateFrom.format());
-        if (startDateTo   != null) conditions.add('SBQQ__StartDate__c <= ' + startDateTo.format());
-        if (endDateFrom != null) conditions.add('SBQQ__EndDate__c >= ' + endDateFrom.format());
-        if (endDateTo   != null) conditions.add('SBQQ__EndDate__c <= ' + endDateTo.format());
-
-        String whereClause = conditions.isEmpty() ? '' : ' WHERE ' + String.join(conditions, ' AND ');
-
-        // Total rows
-        totalRows = (Integer)Database.countQuery('SELECT COUNT() FROM SBQQ__Subscription__c ' + whereClause);
-
-        // Offset
-        Integer offsetValue = (pageNumber - 1) * pageSize;
-        if (offsetValue >= totalRows && totalRows > 0) {
-            pageNumber = getTotalPages();
-            offsetValue = (pageNumber - 1) * pageSize;
-        }
-
-        // Query
-        String soql =
-            'SELECT Id, Name, SBQQ__Account__c, SBQQ__Account__r.Name, ' +
-            'SBQQ__Product__c, SBQQ__Product__r.Name, SBQQ__Contract__r.Status, ' +
-            'SBQQ__StartDate__c, SBQQ__EndDate__c ' +
-            'FROM SBQQ__Subscription__c ' + whereClause +
-            ' ORDER BY ' + sortColumn + ' ' + sortDirection +
-            ' LIMIT ' + pageSize + ' OFFSET ' + offsetValue;
-
-        currentRows = Database.query(soql);
-    }
-
-    /* ACTION METHODS */
-    public PageReference applyFilters() { pageNumber = 1; runQuery(); return null; }
-    public PageReference resetFilters() {
-        filterAccountName = null;
-        status = 'All';
-        searchText = null;
-        startDateFrom = null;
-        startDateTo = null;
-        endDateFrom = null;
-        endDateTo = null;
-        pageNumber = 1;
-        runQuery();
-        return null;
-    }
-
-    public PageReference next() { if (!getIsLastPage()) { pageNumber++; runQuery(); } return null; }
-    public PageReference previous() { if (!getIsFirstPage()) { pageNumber--; runQuery(); } return null; }
-    public PageReference first() { pageNumber = 1; runQuery(); return null; }
-    public PageReference last() { pageNumber = getTotalPages(); runQuery(); return null; }
-    public PageReference applyPageSize() { pageNumber = 1; runQuery(); return null; }
-}
+Hi @Ben Stern, I think we can keep this quite simple. For MVP we just need to get the Salesforce - Defender for Cloud Apps integration set up: Protect your Salesforce environment - Microsoft Defender for Cloud Apps. We should be able to configure this together on one of our regular calls. This will forward the logs we have available now which we can assess and make a determination as to whether additional licencing (such as saleforce shield) is required for other log types. If so, these additional log types should get picked up by the SF/DfCA integration once the licences and changes are applied in Salesforce. Thanks

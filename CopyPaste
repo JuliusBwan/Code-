@@ -1,10 +1,4 @@
 public class CustomerOrderLineHandler {
-    
-    private Static Integer insertCount = 0;
-    private Static Integer updateCount = 0;
-    private Static Integer deleteUpdateCount = 0;
-    private Static Integer updateDeletedCount = 0;
-    
 	/**
      * Wrapper class to accept data from a Flow.
      * This allows passing different values depending on
@@ -15,15 +9,15 @@ public class CustomerOrderLineHandler {
         public String operationType;
         // "create", "update", or "delete"
         
-        @InvocableVariable(required=true)
+        //@InvocableVariable(required=true)
         public OrderItem newRecord;
         // Used for Create or Update operation
         
-        @InvocableVariable(required=true)
+        //@InvocableVariable(required=true)
         public OrderItem oldRecord;
         // Only used for Update operations
 
-        @InvocableVariable(required=true)
+        //@InvocableVariable(required=true)
         public Id deletedRecordId;
         // Used for Delete operations
 
@@ -46,6 +40,7 @@ public class CustomerOrderLineHandler {
         
       	//Loop through wrapper payloads from the flow
         for (RequestWrapper req : requests){
+            
             //sort into correct operation buckets
             if (req.operationType == 'create' && req.newRecord != null) {
                 createList.add(req.newRecord);
@@ -54,7 +49,7 @@ public class CustomerOrderLineHandler {
                 updateNew.add(req.newRecord);
                 updateOld.add(req.oldRecord);
             }
-            else if (req.operationtype == 'delete' && req.deletedRecordId != null) {
+            else if (req.operationType == 'delete' && req.deletedRecordId != null) {
                 updateDeleteList.add(req.deletedRecordId);
             }
         }
@@ -139,46 +134,26 @@ public class CustomerOrderLineHandler {
         //Insert the COL records with partial success
         Database.SaveResult[] results = Database.insert(colsToInsert, /*allOrNone*/ false);
         
-        //Tally results
-        insertCount += colsToInsert.size();
+            //Count the failed records
         Integer failCount = 0;
+        for (Database.SaveResult sr : results) {            
+            if(!sr.isSuccess()) { failCount++; }
+        }
         
-        //Collect error details for the email body
-        List<String> errorLines = new List<String>();
-        
-        for (Integer i = 0; i < results.size(); i++) {
-            Database.SaveResult sr = results[i];
+        if (failCount > 0) {
+            // Build and send the summary email
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setToAddresses(new String[] { UserInfo.getUserEmail() });
+            mail.setSubject('Customer Order Lines - Create Summary');
             
-            if(!sr.isSuccess()) {
-                failCount++;
-                for (Database.Error e : sr.getErrors()) {
-                    // Include index, status, message, and any field names
-                    errorLines.add('Idx ' + i + ' | Status=' + String.valueOf(e.getStatusCode()) +' | Msg="' + e.getMessage() + '"' +(e.getFields() != null && !e.getFields().isEmpty()
-                    ? ' | Fields=' + String.valueOf(e.getFields()) : ''));
-                }
-            }
+            // Compose the body
+            String body = 'One or more records failed during the insert operation.' + '\n\n' +
+            'Total attempted inserts: ' + String.valueOf(colsToInsert.size()) + '\n' + 'Failed inserts: ' + String.valueOf(failCount) + '\n' +
+            'Successful inserts: ' + String.valueOf(colsToInsert.size() - failCount) + '\n' +'Action: Please review logs or error queues for details.';
+                
+            mail.setPlainTextBody(body);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
         }
-        
-        // Build and send the summary email
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        
-        // Send to the running user;
-        mail.setToAddresses(new String[] { UserInfo.getUserEmail() });
-        mail.setSubject('Customer Order Lines - Create Summary');
-        
-        // Compose the body
-        String body ='Create operation completed in handleCreates().' + '\n\n' +'Total attempted inserts: ' + String.valueOf(colsToInsert.size()) + '\n' +
-            'Successful inserts: ' + String.valueOf(colsToInsert.size() - failCount) + '\n' +'Failed inserts: ' + String.valueOf(failCount) + '\n';
-        
-        if (!errorLines.isEmpty()) {
-            // Include a brief error section (trim if you expect many failures)
-            body += '\nError details:\n- ' + String.join(errorLines, '\n- ');
-        }
-        mail.setPlainTextBody(body);
-        
-        // Send the email
-        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-
     }
     
 	/**
@@ -213,19 +188,40 @@ public class CustomerOrderLineHandler {
                 
                 if (col.blng_LastChargeToDate__c != newOI.blng__LastChargeToDate__c) { col.blng_LastChargeToDate__c = newOI.blng__LastChargeToDate__c; changed = true; }
                 if (col.blng_NextBillingDate__c != newOI.blng__NextBillingDate__c) { col.blng_NextBillingDate__c = newOI.blng__NextBillingDate__c; changed = true; }
-                if (col.Contract_Status__c != newOI.SBQQ__Contract__c) { col.Contract_Status__c = newOI.SBQQ__Contract__c; changed = true; }
+                if (col.Contract_Status__c != newOI.SBQQ__Contract__r.Status) { col.Contract_Status__c = newOI.SBQQ__Contract__r.Status; changed = true; }
                 if (col.End_Date__c != newOI.EndDate) { col.End_Date__c = newOI.EndDate; changed = true; }
                 if (col.OrderItemNumber__c != newOI.OrderItemNumber) { col.OrderItemNumber__c = newOI.OrderItemNumber; changed = true; }
                 if (col.Product_Name__c != (newOI.Product2 != null ? newOI.Product2.Name : null)) { col.Product_Name__c = newOI.Product2 != null ? newOI.Product2.Name : null; changed = true; }
                 if (col.Quantity__c != newOI.Quantity) { col.Quantity__c = newOI.Quantity; changed = true; }
                 if (col.Service_Date__c != newOI.ServiceDate) { col.Service_Date__c = newOI.ServiceDate; changed = true; }
-                if (col.Subscription_Term_Months__c != newOI.SBQQ__DefaultSubscriptionTerm__c) { col.Subscription_Term_Months__c = newOI.SBQQ__SubscriptionTerm__c; changed = true; }
+                if (col.Subscription_Term_Months__c != newOI.SBQQ__DefaultSubscriptionTerm__c) { col.Subscription_Term_Months__c = newOI.SBQQ__DefaultSubscriptionTerm__c; changed = true; }
                 if (col.Total_Price__c != newOI.TotalPrice) { col.Total_Price__c = newOI.TotalPrice; changed = true; }
                 
                 //if any fields have changed, update the last synched date field, add to colsToUpdate list
                 if (changed) { col.Last_Synced_Date__c = System.now(); colsToUpdate.add(col); }
             }
-            if (!colsToUpdate.isEmpty()) { update colsToUpdate; }
+        }
+       	if (colsToUpdate.isEmpty()) { return; }
+        
+        Database.SaveResult[] results = Database.update(colsToUpdate, false);
+        
+        //Count failures
+        Integer failCount = 0;
+        for (Database.SaveResult sr : results) {
+            if (!sr.isSuccess()) { failCount++; }
+        }
+        //send a single generic email only if there were failures
+        if (failCount > 0) {
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setToAddresses(new String[] { UserInfo.getUserEmail() });
+    		mail.setSubject('Customer Order Lines - Update: Failures Detected');
+
+            String body = 'One or more records failed during the update operation.' + '\n\n' +
+                'Total attempted updates: ' + String.valueOf(colsToUpdate.size()) + '\n' +'Failed updates: ' + String.valueOf(failCount) + '\n' +
+                'Successful updates: ' + String.valueOf(colsToUpdate.size() - failCount) + '\n' +'Action: Please review logs or error queues for details.';
+        
+            mail.setPlainTextBody(body);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
         }
     }
     
@@ -248,44 +244,26 @@ public class CustomerOrderLineHandler {
         //Update the COL records with partial success
         Database.SaveResult[] results = Database.update(deletedToUpdate, false);
         
-        //Tally results
-        updateDeletedCount += deletedToUpdate.size();
+        //Count failures
         Integer failCount = 0;
-        
-        //Collect error details for the email body
-        List<String> errorLines = new List<String>();
-        
-        for (Integer i = 0; i < results.size(); i++) {
-            Database.SaveResult sr = results[i];
-            
+        for (Database.SaveResult sr : results) {
             if(!sr.isSuccess()) {
                 failCount++;
-                for (Database.Error e : sr.getErrors()) {
-                    // Include index, status, message, and any field names
-                    errorLines.add('Idx ' + i + ' | Status=' + String.valueOf(e.getStatusCode()) +' | Msg="' + e.getMessage() + '"' +(e.getFields() != null && !e.getFields().isEmpty()
-                    ? ' | Fields=' + String.valueOf(e.getFields()) : ''));
-                }
             }
         }
-        
-        // Build and send the summary email
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        
-        // Send to the running user;
-        mail.setToAddresses(new String[] { UserInfo.getUserEmail() });
-        mail.setSubject('Customer Order Lines - Update to deleted records Summary');
-        
-        // Compose the body
-        String body ='Update operation on deleted records completed in handleDeletes().' + '\n\n' +'Total attempted updates: ' + String.valueOf(deletedToUpdate.size()) + '\n' +
-            'Successful updates: ' + String.valueOf(deletedToUpdate.size() - failCount) + '\n' +'Failed updates: ' + String.valueOf(failCount) + '\n';
-        
-        if (!errorLines.isEmpty()) {
-            // Include a brief error section (trim if you expect many failures)
-            body += '\nError details:\n- ' + String.join(errorLines, '\n- ');
+        // Send a single generic email only if there were failures
+        if (failCount > 0) {
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setToAddresses(new String[] { UserInfo.getUserEmail() });
+            mail.setSubject('Customer Order Lines - Delete Marking: Failures Detected');
+            
+            // Compose the body
+            String body = 'One or more records failed during the delete-marking operation.' + '\n\n' +
+            'Total attempted updates: ' + String.valueOf(deletedToUpdate.size()) + '\n' + 'Failed updates: ' + String.valueOf(failCount) + '\n' +
+            'Successful updates: ' + String.valueOf(deletedToUpdate.size() - failCount) + '\n' +'Action: Please review logs or error queues for details.';
+            
+            mail.setPlainTextBody(body);
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
         }
-        mail.setPlainTextBody(body);
-        
-        // Send the email
-        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
     }
 }

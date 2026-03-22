@@ -33,7 +33,7 @@ Access Salesforce hosted MCP servers (mcp_api)
 Access Service Cloud Real Time API (scrt_api)
 
 
-explain in few terms to a junior "External Client Apps
+"External Client Apps
 Integrate third-party apps with Salesforce using APIs and standard protocols, such as SAML, OAuth, and OpenID Connect using External Client Apps. These settings apply to all External Client Apps configured in your org.
 
 Allow access to External Client App consumer secrets via Metadata API (checkbox)
@@ -59,10 +59,9 @@ Require secret for Refresh Token Flow (checkbox)
 Require Proof Key for Code Exchange (PKCE) extension for Supported Authorization Flows (checkbox)
 Enable Refresh Token Rotation (checkbox)
 Issue JSON Web Token (JWT)-based access tokens for named users (checkbox)
-
-Enable Authorization Code and Credentials Flow
-Require user credentials in the POST body for Authorization Code and Credentials Flow (checkbox)
-OAuth Flows and External Client App Enhancements (inner checkbox dependent on the one above)
-Enable Client Credentials Flow (checkbox)
 *Run As (Username) -> text input
 
+
+
+Enable Authorization Code and Credentials Flow (checkbox)
+Require user credentials in the POST body for Authorization Code and Credentials Flow (inner checkbox)

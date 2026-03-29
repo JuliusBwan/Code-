@@ -1,0 +1,61 @@
+// ─── CustomerOrderLineBatch ───────────────────────────────────────────────────
+public class CustomerOrderLineBatch implements Database.Batchable<SObject> {
+   
+    private Integer successCount = 0;
+    private Integer failureCount = 0;
+    private static String adminEmail = 'salesforce.admin@gbgplc.com';
+
+    public Database.QueryLocator start(Database.BatchableContext bc) { 
+        return Database.getQueryLocator(
+            'SELECT Id, Product2.Name, ' +
+            'SBQQ__Contract__c, SBQQ__Contract__r.Status, ' +
+            'SBQQ__Subscription__c, Order.AccountId, ' +
+            'Quantity, TotalPrice, ServiceDate, EndDate, ' +
+            'blng__LastChargeToDate__c, blng__NextBillingDate__c, ' +
+            'OrderItemNumber, SBQQ__DefaultSubscriptionTerm__c ' +
+            'FROM OrderItem ' +
+            'WHERE Id NOT IN (SELECT OrderItem__c FROM CustomerOrderLine__c)'
+        );
+    } 
+    
+
+    public void execute(Database.BatchableContext bc, List<OrderItem> scope) {
+
+        List<CustomerOrderLine__c> cols = new List<CustomerOrderLine__c>();
+         
+        for (OrderItem o : scope) { cols.add(CustomerOrderLineService.buildCOL(o)); }
+        
+        if (cols.isEmpty()) return;
+        
+        Database.SaveResult[] results = Database.insert(cols, false);
+        
+        for (Database.SaveResult sr : results) {
+            if (sr.isSuccess()) { successCount++; } else { failureCount++; }
+        }
+    }
+    
+      
+    public void finish(Database.BatchableContext bc) { 
+        AsyncApexJob job = [SELECT Id, Status, NumberOfErrors, JobItemsProcessed, TotalJobItems, CreatedBy.Email 
+                            FROM AsyncApexJob 
+                            WHERE Id = :bc.getJobId() 
+                            LIMIT 1
+                         ];
+        String body = 
+            'Nightly Customer Order Line Batch Completed.\n\n' +
+            'Status           : ' + job.Status            + '\n' +
+            'Records Inserted : ' + successCount          + '\n' +
+            'Records Failed   : ' + failureCount          + '\n' +
+            'Total Chunks     : ' + job.TotalJobItems     + '\n' +
+            'Chunks Processed : ' + job.JobItemsProcessed + '\n' +
+            'Apex Errors      : ' + job.NumberOfErrors    + '\n' +
+            'Batch Job Id     : ' + job.Id                + '\n';
+       
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+        mail.setToAddresses(new List<String>{ adminEmail });
+        mail.setSubject('Creation Of Customer Order Lines ' + job.Status);
+        mail.setPlainTextBody(body);
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+    }
+
+}

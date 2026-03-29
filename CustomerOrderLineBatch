@@ -1,61 +1,146 @@
 // ─── CustomerOrderLineBatch ───────────────────────────────────────────────────
-public class CustomerOrderLineBatch implements Database.Batchable<SObject> {
-   
-    private Integer successCount = 0;
-    private Integer failureCount = 0;
-    private static String adminEmail = 'salesforce.admin@gbgplc.com';
+/**
+ * Nightly batch job — the safety net for anything the trigger missed.
+ *
+ * Three passes in a single batch run:
+ *  1. INSERT  — OrderItems with no matching COL (trigger was bypassed or failed).
+ *  2. UPDATE  — COLs whose fields have drifted out of sync with their OrderItem.
+ *  3. ORPHAN  — COLs whose OrderItem was deleted without the trigger firing.
+ *
+ * Notification:
+ *  - Per-chunk DML failures are reported via NotificationService (same as trigger path).
+ *  - A finish-summary email goes to the configured admin address via NotificationService.
+ *
+ * How to schedule (Execute Anonymous):
+ *   System.schedule(
+ *       'Nightly Customer Order Line Sync',
+ *       '0 0 1 * * ?',           // 1:00 AM every night
+ *       new CustomerOrderLineScheduler()
+ *   );
+ */
+public class CustomerOrderLineBatch implements Database.Batchable<SObject>, Database.Stateful {
 
-    public Database.QueryLocator start(Database.BatchableContext bc) { 
+    // Counters survive across execute() chunks because of Database.Stateful
+    @TestVisible private Integer insertSuccess = 0;
+    @TestVisible private Integer insertFail    = 0;
+    @TestVisible private Integer updateSuccess = 0;
+    @TestVisible private Integer updateFail    = 0;
+    @TestVisible private Integer orphanSuccess = 0;
+    @TestVisible private Integer orphanFail    = 0;
+
+    // ── PASS 1 — missing COLs ────────────────────────────────────────────────
+
+    public Database.QueryLocator start(Database.BatchableContext bc) {
+        // Only fetch OrderItems that have no COL yet
         return Database.getQueryLocator(
-            'SELECT Id, Product2.Name, ' +
-            'SBQQ__Contract__c, SBQQ__Contract__r.Status, ' +
-            'SBQQ__Subscription__c, Order.AccountId, ' +
-            'Quantity, TotalPrice, ServiceDate, EndDate, ' +
-            'blng__LastChargeToDate__c, blng__NextBillingDate__c, ' +
-            'OrderItemNumber, SBQQ__DefaultSubscriptionTerm__c ' +
-            'FROM OrderItem ' +
-            'WHERE Id NOT IN (SELECT OrderItem__c FROM CustomerOrderLine__c)'
+            'SELECT Id, OrderItemNumber, Product2.Name, ' +
+            '       Order.AccountId, SBQQ__Contract__c, SBQQ__Contract__r.Status, ' +
+            '       Quantity, TotalPrice, ServiceDate, EndDate, ' +
+            '       blng__LastChargeToDate__c, blng__NextBillingDate__c, ' +
+            '       SBQQ__DefaultSubscriptionTerm__c ' +
+            'FROM   OrderItem ' +
+            'WHERE  Id NOT IN (SELECT OrderItem__c FROM CustomerOrderLine__c)'
         );
-    } 
-    
+    }
 
     public void execute(Database.BatchableContext bc, List<OrderItem> scope) {
+        // ── Insert missing COLs ──────────────────────────────────────────────
+        List<CustomerOrderLine__c> toInsert = new List<CustomerOrderLine__c>();
+        for (OrderItem o : scope) {
+            toInsert.add(CustomerOrderLineService.buildCOL(o));
+        }
 
-        List<CustomerOrderLine__c> cols = new List<CustomerOrderLine__c>();
-         
-        for (OrderItem o : scope) { cols.add(CustomerOrderLineService.buildCOL(o)); }
-        
-        if (cols.isEmpty()) return;
-        
-        Database.SaveResult[] results = Database.insert(cols, false);
-        
-        for (Database.SaveResult sr : results) {
-            if (sr.isSuccess()) { successCount++; } else { failureCount++; }
+        if (!toInsert.isEmpty()) {
+            Database.SaveResult[] insertResults = Database.insert(toInsert, false);
+            NotificationService.handleResults(
+                'Batch COL Insert', toInsert.size(), insertResults
+            );
+            for (Database.SaveResult sr : insertResults) {
+                if (sr.isSuccess()) { insertSuccess++; } else { insertFail++; }
+            }
+        }
+
+        // ── Update drifted COLs ──────────────────────────────────────────────
+        // Re-query COLs for the same OrderItems (they may now exist after the insert above)
+        Set<Id> scopeIds = new Map<Id, OrderItem>(scope).keySet();
+        Map<Id, CustomerOrderLine__c> existingCOLs =
+            CustomerOrderLineRepository.getByOrderItemIds(scopeIds);
+
+        List<CustomerOrderLine__c> toUpdate = new List<CustomerOrderLine__c>();
+        for (OrderItem o : scope) {
+            if (!existingCOLs.containsKey(o.Id)) continue;
+            CustomerOrderLine__c col = existingCOLs.get(o.Id);
+
+            // Use the COL's stored values as the "old" state
+            OrderItem pseudoOld = CustomerOrderLineService.buildPseudoOld(col);
+            Boolean changed = CustomerOrderLineService.applyChanges(col, pseudoOld, o);
+            if (changed) {
+                col.Last_Synced_Date__c = System.now();
+                toUpdate.add(col);
+            }
+        }
+
+        if (!toUpdate.isEmpty()) {
+            Database.SaveResult[] updateResults = Database.update(toUpdate, false);
+            NotificationService.handleResults(
+                'Batch COL Update', toUpdate.size(), updateResults
+            );
+            for (Database.SaveResult sr : updateResults) {
+                if (sr.isSuccess()) { updateSuccess++; } else { updateFail++; }
+            }
+        }
+
+        // ── Orphan cleanup ───────────────────────────────────────────────────
+        List<CustomerOrderLine__c> orphans = CustomerOrderLineRepository.getOrphaned();
+        List<CustomerOrderLine__c> toTag   = new List<CustomerOrderLine__c>();
+        for (CustomerOrderLine__c col : orphans) {
+            col.Name                = CustomerOrderLinesUtils.prependDeletedTag(col.Name);
+            col.Last_Synced_Date__c = System.now();
+            toTag.add(col);
+        }
+
+        if (!toTag.isEmpty()) {
+            Database.SaveResult[] orphanResults = Database.update(toTag, false);
+            NotificationService.handleResults(
+                'Batch COL Orphan Cleanup', toTag.size(), orphanResults
+            );
+            for (Database.SaveResult sr : orphanResults) {
+                if (sr.isSuccess()) { orphanSuccess++; } else { orphanFail++; }
+            }
         }
     }
-    
-      
-    public void finish(Database.BatchableContext bc) { 
-        AsyncApexJob job = [SELECT Id, Status, NumberOfErrors, JobItemsProcessed, TotalJobItems, CreatedBy.Email 
-                            FROM AsyncApexJob 
-                            WHERE Id = :bc.getJobId() 
-                            LIMIT 1
-                         ];
-        String body = 
-            'Nightly Customer Order Line Batch Completed.\n\n' +
-            'Status           : ' + job.Status            + '\n' +
-            'Records Inserted : ' + successCount          + '\n' +
-            'Records Failed   : ' + failureCount          + '\n' +
-            'Total Chunks     : ' + job.TotalJobItems     + '\n' +
-            'Chunks Processed : ' + job.JobItemsProcessed + '\n' +
-            'Apex Errors      : ' + job.NumberOfErrors    + '\n' +
-            'Batch Job Id     : ' + job.Id                + '\n';
-       
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        mail.setToAddresses(new List<String>{ adminEmail });
-        mail.setSubject('Creation Of Customer Order Lines ' + job.Status);
-        mail.setPlainTextBody(body);
-        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-    }
 
+    // ── FINISH — summary email ────────────────────────────────────────────────
+
+    public void finish(Database.BatchableContext bc) {
+        AsyncApexJob job = [
+            SELECT Id, Status, NumberOfErrors, JobItemsProcessed, TotalJobItems
+            FROM   AsyncApexJob
+            WHERE  Id = :bc.getJobId()
+            LIMIT  1
+        ];
+
+        String body =
+            'Nightly Customer Order Line Batch Completed.\n\n' +
+            'Status           : ' + job.Status             + '\n' +
+            'Total Chunks     : ' + job.TotalJobItems      + '\n' +
+            'Chunks Processed : ' + job.JobItemsProcessed  + '\n' +
+            'Apex Errors      : ' + job.NumberOfErrors     + '\n\n' +
+            '── Inserts ──\n' +
+            '  Succeeded : ' + insertSuccess + '\n' +
+            '  Failed    : ' + insertFail    + '\n\n' +
+            '── Updates (drift) ──\n' +
+            '  Succeeded : ' + updateSuccess + '\n' +
+            '  Failed    : ' + updateFail    + '\n\n' +
+            '── Orphan Cleanup ──\n' +
+            '  Succeeded : ' + orphanSuccess + '\n' +
+            '  Failed    : ' + orphanFail    + '\n\n' +
+            'Batch Job Id : ' + job.Id;
+
+        // Delegate email to NotificationService — no hardcoded addresses here
+        NotificationService.sendSummaryEmail(
+            'Nightly Customer Order Line Sync — ' + job.Status,
+            body
+        );
+    }
 }

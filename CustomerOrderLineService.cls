@@ -199,22 +199,24 @@ public class CustomerOrderLineService {
      * This is needed in the async path because old trigger values are gone
      * by the time the future method runs.
      */
-    @TestVisible
-    private static OrderItem buildPseudoOld(CustomerOrderLine__c col) {
-        OrderItem pseudo = new OrderItem();
-        pseudo.blng__LastChargeToDate__c        = col.blng_LastChargeToDate__c;
-        pseudo.blng__NextBillingDate__c         = col.blng_NextBillingDate__c;
-        pseudo.EndDate                          = col.End_Date__c;
-        pseudo.OrderItemNumber                  = col.OrderItemNumber__c;
-        pseudo.Quantity                         = col.Quantity__c;
-        pseudo.ServiceDate                      = col.Service_Date__c;
-        pseudo.SBQQ__DefaultSubscriptionTerm__c = col.Subscription_Term_Months__c;
-        pseudo.TotalPrice                       = col.Total_Price__c;
-        // Contract status and Product name are strings stored on COL directly;
-        // applyChanges reads them via relationship fields so we leave those null —
-        // the diff will pick them up correctly from newOI's relationship fields.
-        return pseudo;
-    }
+@TestVisible
+private static OrderItem buildPseudoOld(CustomerOrderLine__c col) {
+    OrderItem pseudo = new OrderItem();
+    pseudo.blng__LastChargeToDate__c        = col.blng_LastChargeToDate__c;
+    pseudo.blng__NextBillingDate__c         = col.blng_NextBillingDate__c;
+    pseudo.EndDate                          = col.End_Date__c;
+    pseudo.OrderItemNumber                  = col.OrderItemNumber__c;
+    pseudo.Quantity                         = col.Quantity__c;
+    pseudo.ServiceDate                      = col.Service_Date__c;
+    pseudo.SBQQ__DefaultSubscriptionTerm__c = col.Subscription_Term_Months__c;
+    pseudo.TotalPrice                       = col.Total_Price__c;
+    // FIXED: Contract Status and Product Name must be reconstructed so
+    // applyChanges() can diff them correctly. Without this, oldStatus/oldProd
+    // are always null, causing false positives or missed diffs.
+    pseudo.SBQQ__Contract__r               = new Contract(Status = col.Contract_Status__c);
+    pseudo.Product2                         = new Product2(Name = col.Product_Name__c);
+    return pseudo;
+}
 
     // ── AFTER DELETE ─────────────────────────────────────────────────────────
 

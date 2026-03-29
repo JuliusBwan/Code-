@@ -1,15 +1,6 @@
 // ─── CustomerOrderLinesUtilsTest ──────────────────────────────────────────────
-/**
- * Tests for CustomerOrderLinesUtils.
- *
- * Pure unit tests — no DML needed for prependDeletedTag.
- * formatColName tests DO need a real insert so Salesforce auto-generates
- * OrderItemNumber (it is a read-only system field and cannot be set manually).
- */
 @isTest
 private class CustomerOrderLinesUtilsTest {
-
-    // ── TEST DATA ─────────────────────────────────────────────────────────────
 
     @testSetup
     static void setupData() {
@@ -37,10 +28,6 @@ private class CustomerOrderLinesUtilsTest {
         );
         insert pbe;
 
-        // Insert two OrderItems:
-        //  - one with a Product (so formatColName includes the product suffix)
-        //  - one without (covers the no-product branch) — achieved by querying
-        //    without the Product2 relationship in that specific test
         OrderItem oi = new OrderItem(
             OrderId          = ord.Id,
             PricebookEntryId = pbe.Id,
@@ -52,7 +39,7 @@ private class CustomerOrderLinesUtilsTest {
         insert oi;
     }
 
-    // ── prependDeletedTag — pure unit tests (no DML needed) ───────────────────
+    // ── prependDeletedTag ─────────────────────────────────────────────────────
 
     @isTest
     static void prependDeletedTag_nullInput_returnsDelOnly() {
@@ -80,11 +67,10 @@ private class CustomerOrderLinesUtilsTest {
             'Normal name should get [DEL] prefix');
     }
 
-    // ── formatColName — requires a real insert for OrderItemNumber ────────────
+    // ── formatColName ─────────────────────────────────────────────────────────
 
     @isTest
-    static void formatColName_withOrderItemNumberAndProduct_includesBoth() {
-        // Query WITH Product2 so the relationship is populated
+    static void formatColName_withOrderItemNumber_usesOnlyKey() {
         OrderItem oi = [
             SELECT Id, OrderItemNumber, Product2.Name
             FROM   OrderItem
@@ -93,19 +79,18 @@ private class CustomerOrderLinesUtilsTest {
 
         String result = CustomerOrderLinesUtils.formatColName(oi);
 
-        // OrderItemNumber is system-generated (e.g. "00000001") — we assert structure
-        // rather than an exact value because the number varies per org
         System.assert(result.startsWith('COL-'),
-            'Name should always start with COL-');
+            'Name should start with COL-');
         System.assert(result.contains(oi.OrderItemNumber),
-            'Name should contain the auto-generated OrderItemNumber');
-        System.assert(result.contains(oi.Product2.Name),
-            'Name should contain the product name when Product2 is present');
+            'Name should contain the OrderItemNumber');
+        System.assert(!result.contains(oi.Product2.Name),
+            'Name should not include the product name');
+        System.assert(result.length() <= 80,
+            'Name should fit within the 80-char limit');
     }
 
     @isTest
-    static void formatColName_withoutProduct_omitsProductSuffix() {
-        // Query WITHOUT Product2 relationship — Product2 will be null on the SObject
+    static void formatColName_withoutProduct_stillFormatsCorrectly() {
         OrderItem oi = [
             SELECT Id, OrderItemNumber
             FROM   OrderItem
@@ -118,7 +103,5 @@ private class CustomerOrderLinesUtilsTest {
             'Name should start with COL-');
         System.assert(result.contains(oi.OrderItemNumber),
             'Name should contain the OrderItemNumber');
-        System.assert(!result.contains('-Utils Product'),
-            'Name should NOT contain a product suffix when Product2 is not queried');
     }
 }
